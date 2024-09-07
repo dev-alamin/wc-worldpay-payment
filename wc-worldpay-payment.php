@@ -363,6 +363,9 @@ function woocommerce_worldpay_init() {
                             'year' => $expiry_year
                         ),
                         "cvc" => $cvc,  // CVC code
+                        'settlement' => array(
+                            'auto' => true,
+                        ),
                     ),
                     'tokenCreation' => array(
                         'type' => 'worldpay'
