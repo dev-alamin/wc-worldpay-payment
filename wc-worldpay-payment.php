@@ -55,15 +55,9 @@ function woocommerce_worldpay_init() {
             $this->init_form_fields();
             $this->init_settings();
 
-            // Actions
-            add_action( 'woocommerce_api_wc_gateway_worldpay', array( $this, 'check_response' ) );
-            add_action( 'woocommerce_receipt_worldpay', array( $this, 'receipt_page' ) );
-
             // Save settings
             add_action( 'admin_notices', array( $this, 'admin_notices' ) );
             add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
-
-            add_filter( 'woocommerce_payment_complete_order_status', array( $this, 'change_payment_complete_order_status' ), 10, 3 );
             
         }
 
@@ -185,6 +179,9 @@ function woocommerce_worldpay_init() {
                 $order->add_order_note( 'Payment authorized. Awaiting further processing.' );
                 $order->update_meta_data( '_payment_response_code', $response['response']['code'] );
                 $order->update_meta_data( '_payment_response_message', $response['response']['message'] );
+
+                $order->payment_complete();
+
                 $order->save();
         
                 return [
@@ -229,39 +226,53 @@ function woocommerce_worldpay_init() {
         private function send_request( $order ) {
             // Retrieve and sanitize the card details from POST request
             $card_number = isset($_POST['worldpay-card-number']) ? sanitize_text_field($_POST['worldpay-card-number']) : '';
-            $expiry      = isset($_POST['worldpay-card-expiry']) ? sanitize_text_field($_POST['worldpay-card-expiry']) : '';
             $cvc         = isset($_POST['worldpay-card-cvc']) ? sanitize_text_field($_POST['worldpay-card-cvc']) : '';
+            $expiry      = isset($_POST['worldpay-card-expiry']) ? sanitize_text_field($_POST['worldpay-card-expiry']) : '';
         
             // Remove any spaces or special characters from card number and expiry date
             $card_number = preg_replace('/\s+/', '', $card_number);
-            $expiry = preg_replace('/\s+/', '', $expiry);
+            // Remove spaces and non-numeric characters except for the slash
+            $cleaned_expiry = str_replace(' ', '', $expiry); // Remove spaces
+            $cleaned_expiry = preg_replace('/[^0-9\/]/', '', $cleaned_expiry); // Remove any other non-numeric characters
+        
+            // Split the cleaned input by slash
+            $parts = explode('/', $cleaned_expiry);
+        
+            // Initialize variables for logging
+            $expiry_month = null;
+            $expiry_year = null;
+        
+            if (count($parts) == 2) {
+                $month = intval($parts[0]);
+                $year = intval($parts[1]);
+        
+                // Ensure the month and year are valid
+                if ($month >= 1 && $month <= 12 && $year >= 0 && $year <= 99) {
+                    // Convert 2-digit year to 4-digit year (assuming 20xx for 2-digit year)
+                    $year += 2000;
+                    $expiry_month = $month;
+                    $expiry_year = $year;
+                }
+            }
         
             // Check if the card info is empty
-            if( empty( $card_number ) || empty( $expiry ) || empty( $cvc ) ) {
-                $this->handle_error( 'Card is empty', 'Please put the card info' );
+            if (empty($card_number) || empty($expiry) || empty($cvc)) {
+                $this->handle_error('Card is empty', 'Please put the card info');
                 return;
             }
-        
-            // Validate card number and expiry date
-            if ( ! $this->validate_card_number( $card_number ) || ! $this->validate_expiry_date( $expiry ) ) {
-                $this->handle_error( 'Invalid card number or expiry!', 'Invalid card!' );
-                return;
-            }
-        
-            // Extract expiry month and year from the expiry string (assuming format is MM/YY or MM/YYYY)
-            list($expiry_month, $expiry_year) = $this->extract_expiry_parts($expiry);
         
             // Ensure expiry month and year are valid and not in the past
-            if ( ! $this->validate_expiry_date_logic( $expiry_month, $expiry_year ) ) {
+            if (!$this->validate_expiry_date_logic($expiry_month, $expiry_year)) {
                 return;
             }
         
             // Build the payload
-            $payload = $this->build_payload( $order, $card_number, $expiry_month, $expiry_year );
+            $payload = $this->build_payload($order, $card_number, $expiry_month, $expiry_year);
         
             // Send the payment request
             return $this->process_payment_request($payload);
         }
+        
         
         
         ### Helper Methods ###
@@ -332,8 +343,12 @@ function woocommerce_worldpay_init() {
         
         // Method to build the payment payload
         private function build_payload($order, $card_number, $expiry_month, $expiry_year) {
+            $allowed_characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_!@#$%()*=-.:;?[]{}~/+';
+            $transaction_reference = 'VapeHub_' . $order->get_order_number();
+            $sanitized_reference = preg_replace('/[^' . preg_quote($allowed_characters, '/') . ']/', '', $transaction_reference);
+
             return array(
-                'transactionReference' => $order->get_order_number(),
+                'transactionReference' => $sanitized_reference,
                 'merchant' => array(
                     'entity' => $this->validate_entity( $this->get_option( 'entity' ) ),
                 ),
@@ -392,6 +407,8 @@ function woocommerce_worldpay_init() {
             // Decode the response
             $response_data = json_decode($response, true);
 
+            // error_log( print_r( $response_data, true ) );
+
             if ($http_code >= 200 && $http_code < 300) {
                 // Handle successful response
                 return array(
@@ -411,14 +428,6 @@ function woocommerce_worldpay_init() {
         private function handle_error($log_message, $user_message) {
             error_log($log_message); // Log error for developers
             wc_add_notice(__($user_message, 'woocommerce-worldpay-addon'), 'error'); // Show user-friendly message in WooCommerce
-        }                
-
-        public function receipt_page( $order ) {
-            echo '<p>' . __( 'Thank you for your order. Please click the button below to pay with Worldpay.', 'woocommerce-worldpay-addon' ) . '</p>';
-        }
-
-        public function check_response() {
-            // Handle Worldpay callback response
         }
 
         public function payment_fields() {
@@ -437,7 +446,7 @@ function woocommerce_worldpay_init() {
             echo '<p class="form-row form-row-wide">
                 <label for="worldpay-card-number">' . __( 'Card Number', 'woocommerce-worldpay-addon' ) . ' <span class="required">*</span></label>
                 <input id="worldpay-card-number" name="worldpay-card-number" class="input-text wc-credit-card-form-card-number" inputmode="numeric" 
-                       autocomplete="cc-number" autocorrect="no" autocapitalize="no" spellcheck="no" 
+                       autocomplete="cc-number" autocorrect="no" autocapitalize="no" maxlength="19" spellcheck="no" 
                        type="tel" placeholder="•••• •••• •••• ••••" required>
             </p>';
         
@@ -462,23 +471,7 @@ function woocommerce_worldpay_init() {
         
             // Close the fieldset
             echo '</fieldset>';
-        }        
-
-        /**
-         * Change payment complete order status to completed for COD orders.
-         *
-         * @since  3.1.0
-         * @param  string         $status Current order status.
-         * @param  int            $order_id Order ID.
-         * @param  WC_Order|false $order Order object.
-         * @return string
-         */
-        public function change_payment_complete_order_status( $status, $order_id = 0, $order = false ) {
-            if ( $order && 'worldpay' === $order->get_payment_method() ) {
-                $status = 'completed';
-            }
-            return $status;
-        }
+        } 
 
             /**
          * Process the refund.
@@ -575,7 +568,7 @@ function woocommerce_worldpay_init() {
 
     add_filter( 'woocommerce_payment_gateways', 'add_worldpay_gateway' );
 
-    add_filter('woocommerce_available_payment_gateways', 'restrict_payment_gateways_for_admin');
+//     add_filter('woocommerce_available_payment_gateways', 'restrict_payment_gateways_for_admin');
 
     function restrict_payment_gateways_for_admin($gateways) {
         if (!current_user_can('manage_options')) { // Check if the user is an admin
@@ -591,11 +584,12 @@ function woocommerce_worldpay_init() {
 
 }
 
-add_action( 'wp_enqueue_scripts', 'enqueue_worldpay_scripts' );
-
+add_action('wp_enqueue_scripts', 'enqueue_worldpay_scripts');
 function enqueue_worldpay_scripts() {
-    if ( is_checkout() ) {
-        wp_enqueue_script( 'worldpay-checkout', plugins_url( '/js/worldpay-checkout.js', __FILE__ ), array( 'jquery' ), '1.0', true );
+    if (is_checkout()) {
+        // Enqueue a script that will handle payment method checks
+        wp_enqueue_script('worldpay-checkout-handler', plugins_url('/js/worldpay-checkout.js', __FILE__), array('jquery'), '1.0', true);
     }
 }
+
 

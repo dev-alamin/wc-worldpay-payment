@@ -7,14 +7,8 @@ jQuery(document).ready(function($) {
 
         // Check if card number, expiry date, and CVC are valid
         const isCardNumberValid = cardNumber.length >= 13 && cardNumber.length <= 19;
-        const isExpiryValid = /^(0[1-9]|1[0-2])\/([0-9]{2})$/.test(expiry);
+        const isExpiryValid = /^\s*(0[1-9]|1[0-2])\s*\/\s*([0-9]{2})\s*$/.test(expiry);
         const isCvcValid = /^[0-9]{3,4}$/.test(cvc);
-
-        if (isCardNumberValid && isExpiryValid && isCvcValid) {
-            $('#place_order').prop('disabled', false); // Enable button
-        } else {
-            $('#place_order').prop('disabled', true); // Disable button
-        }
     }
 
     // Function to show alert if form is incomplete
@@ -61,35 +55,30 @@ jQuery(document).ready(function($) {
         let expiry = $(this).val().replace(/\D/g, ''); // Remove non-numeric characters
 
         if (expiry.length >= 2) {
-            expiry = expiry.substring(0, 2) + '/' + expiry.substring(2); // Insert slash after month
+            expiry = expiry.substring(0, 2) + ' / ' + expiry.substring(2); // Insert slash after month
         }
         if (expiry.length > 5) {
-            expiry = expiry.substring(0, 5); // Limit to MM/YY
+            expiry = expiry.substring(0, 7); // Limit to MM/YY
         }
 
         $(this).val(expiry); // Set the formatted expiry date
 
         const regex = /^(0[1-9]|1[0-2])\/([0-9]{2})$/; // Match MM/YY format
 
-        if (!regex.test(expiry)) {
-            $(this).addClass('woocommerce-invalid').removeClass('woocommerce-validated');
-            showError('Expiry date is invalid');
-        } else {
-            const [month, year] = expiry.split('/');
-            const expMonth = parseInt(month, 10);
-            const expYear = parseInt('20' + year, 10);
-            const currentDate = new Date();
-            const currentMonth = currentDate.getMonth() + 1; // Months are zero-based
-            const currentYear = currentDate.getFullYear();
+        // const [month, year] = expiry.split('/');
+        // const expMonth = parseInt(month, 10);
+        // const expYear = parseInt('20' + year, 10);
+        // const currentDate = new Date();
+        // const currentMonth = currentDate.getMonth() + 1; // Months are zero-based
+        // const currentYear = currentDate.getFullYear();
 
-            if (expYear < currentYear || (expYear === currentYear && expMonth < currentMonth)) {
-                $(this).addClass('woocommerce-invalid').removeClass('woocommerce-validated');
-                showError('Expiry date is expired');
-            } else {
-                $(this).addClass('woocommerce-validated').removeClass('woocommerce-invalid');
-                removeError();
-            }
-        }
+        // if (expYear < currentYear || (expYear === currentYear && expMonth < currentMonth)) {
+        //     $(this).addClass('woocommerce-invalid').removeClass('woocommerce-validated');
+        //     showError('Expiry date is expired');
+        // } else {
+        //     $(this).addClass('woocommerce-validated').removeClass('woocommerce-invalid');
+        //     removeError();
+        // }
         checkFormValidity(); // Check form validity after updating
     });
 
@@ -109,35 +98,4 @@ jQuery(document).ready(function($) {
         }
         checkFormValidity(); // Check form validity after updating
     });
-
-    // Prevent form submission if card details are missing
-    $(document).on('submit', 'form.checkout', function(e) {
-        if (!validateBeforeSubmit()) {
-            e.preventDefault(); // Stop form from submitting
-        }
-    });
-
-    $('body').on('updated_checkout', function() {
-        usingGateway();
-
-        $('input[name="payment_method"]').on('change', function() {
-            usingGateway();
-        });
-    });
-
-    // Function to handle payment method check
-    function usingGateway() {
-        var selectedPaymentMethod = $("input[name='payment_method']:checked").val();
-        console.log("Selected payment method:", selectedPaymentMethod);
-
-        if (selectedPaymentMethod === 'vh_worldpay') {
-            // Handle AJAX updates
-            $(document).ajaxComplete(function() {
-                // Re-check form validity after AJAX updates
-                checkFormValidity();
-            });
-            checkFormValidity();
-            }
-    }
-
 });
