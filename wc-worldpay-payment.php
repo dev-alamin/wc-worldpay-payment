@@ -267,7 +267,7 @@ function woocommerce_worldpay_init() {
             }
         
             // Build the payload
-            $payload = $this->build_payload($order, $card_number, $expiry_month, $expiry_year);
+            $payload = $this->build_payload($order, $card_number, $expiry_month, $expiry_year, $cvc);
         
             // Send the payment request
             return $this->process_payment_request($payload);
@@ -342,7 +342,7 @@ function woocommerce_worldpay_init() {
         }
         
         // Method to build the payment payload
-        private function build_payload($order, $card_number, $expiry_month, $expiry_year) {
+        private function build_payload($order, $card_number, $expiry_month, $expiry_year, $cvc ) {
             $allowed_characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_!@#$%()*=-.:;?[]{}~/+';
             $transaction_reference = 'VapeHub_' . $order->get_order_number();
             $sanitized_reference = preg_replace('/[^' . preg_quote($allowed_characters, '/') . ']/', '', $transaction_reference);
@@ -361,7 +361,8 @@ function woocommerce_worldpay_init() {
                         'expiryDate' => array(
                             'month' => $expiry_month,
                             'year' => $expiry_year
-                        )
+                        ),
+                        "cvc" => $cvc,  // CVC code
                     ),
                     'tokenCreation' => array(
                         'type' => 'worldpay'
@@ -407,7 +408,7 @@ function woocommerce_worldpay_init() {
             // Decode the response
             $response_data = json_decode($response, true);
 
-            // error_log( print_r( $response_data, true ) );
+            error_log( print_r( $response_data, true ) );
 
             if ($http_code >= 200 && $http_code < 300) {
                 // Handle successful response
@@ -588,7 +589,7 @@ add_action('wp_enqueue_scripts', 'enqueue_worldpay_scripts');
 function enqueue_worldpay_scripts() {
     if (is_checkout()) {
         // Enqueue a script that will handle payment method checks
-        wp_enqueue_script('worldpay-checkout-handler', plugins_url('/js/worldpay-checkout.js', __FILE__), array('jquery'), '1.0', true);
+        wp_enqueue_script('worldpay-checkout-handler', plugins_url('/js/worldpay-checkout.js', __FILE__), array('jquery'), time(), true);
     }
 }
 
