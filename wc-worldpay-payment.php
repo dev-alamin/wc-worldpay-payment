@@ -126,6 +126,8 @@ function woocommerce_worldpay_init() {
         }
 
         public function process_payment( $order_id ) {
+            global $woocommerce;
+            $order = new WC_Order( $order_id );
             // Step 1: Check for WooCommerce validation errors before proceeding
             if ( WC()->cart->needs_payment() && WC()->cart->check_cart_items() ) {
                 // Check if any notices (errors) were added by WooCommerce
@@ -148,7 +150,6 @@ function woocommerce_worldpay_init() {
             }
         
             // Step 4: Retrieve the order
-            $order = wc_get_order( $order_id );
             if ( ! $order ) {
                 wc_add_notice( __( 'Order not found. Please try again.', 'woocommerce-worldpay-addon' ), 'error' );
                 return array(
@@ -163,8 +164,8 @@ function woocommerce_worldpay_init() {
             // Step 6: Handle the response from the payment gateway
             if ( isset( $response['result'] ) && $response['result'] === 'success' ) {
                 // Handle successful payment
-                // Remove cart.
-		        WC()->cart->empty_cart();
+                // Remove cart
+                $woocommerce->cart->empty_cart();
 
                 return $this->handle_successful_payment( $response, $order );
             } else {
@@ -172,33 +173,42 @@ function woocommerce_worldpay_init() {
             }
         }
         
-        
         private function handle_successful_payment( $response, $order ) {
-            if ( isset( $response['response']['outcome'] ) && $response['response']['outcome'] === 'authorized' ) {
-                // Payment was authorized
-                $order->add_order_note( 'Payment authorized. Awaiting further processing.' );
-                $order->update_meta_data( '_payment_response_code', $response['response']['code'] );
-                $order->update_meta_data( '_payment_response_message', $response['response']['message'] );
-
-                $order->payment_complete();
-
+            if ( isset( $response['response']['outcome'] ) && ($response['response']['outcome'] === 'authorized' || 
+            $response['response']['outcome'] === 'sentForSettlement') ) {
+                // Payment was authorized or sent for settlement
+                $order->add_order_note( 'Payment authorized. Awaiting settlement.' );
+        
+                if ( isset( $response['response']['code'] ) ) {
+                    $order->update_meta_data( '_payment_response_code', $response['response']['code'] );
+                }
+        
+                if ( isset( $response['response']['message'] ) ) {
+                    $order->update_meta_data( '_payment_response_message', $response['response']['message'] );
+                }
+        
+                $order->update_status( 'processing', 'Payment authorized. Awaiting settlement.' );
+        
+                wc_get_logger()->log( 'info', 'Payment successful for Order ' . $order->get_id() . '. Outcome: ' . $response['response']['outcome'] );
+        
                 $order->save();
         
                 return [
                     'result'   => 'success',
                     'redirect' => $this->get_return_url( $order ),
                 ];
-
+        
             } else {
-                // Outcome was not authorized
+                // Outcome was not authorized or failed
                 $order->add_order_note( 'Payment not authorized. Outcome: ' . $response['response']['outcome'] );
+                wc_get_logger()->log( 'error', 'Payment error for Order ' . $order->get_id() . '. Outcome: ' . print_r( $response, true ) );
                 wc_add_notice( __( 'Payment was not authorized. Please try again.', 'woocommerce-worldpay-addon' ), 'error' );
                 return [
                     'result'   => 'failure',
                     'redirect' => '',
                 ];
             }
-        }
+        }        
         
         private function handle_failed_payment( $response, $order ) {
             // Log error for debugging (optional)
@@ -273,42 +283,6 @@ function woocommerce_worldpay_init() {
             return $this->process_payment_request($payload);
         }
         
-        
-        
-        ### Helper Methods ###
-        
-        // Method to validate card number
-        private function validate_card_number($card_number) {
-            if (!preg_match('/^\d{16}$/', $card_number)) {
-                $this->handle_error('Invalid card number format.', 'Payment was not authorized. Invalid card number.');
-                return false;
-            }
-            return true;
-        }
-        
-        // Method to validate expiry date format (MM/YY)
-        private function validate_expiry_date($expiry) {
-            if (!preg_match('/^\d{2}\/\d{2}$/', $expiry)) {
-                $this->handle_error('Invalid expiry date format.', 'Invalid expiry date format.');
-                return false;
-            }
-            return true;
-        }
-        
-        // Method to extract expiry month and year from expiry string
-        private function extract_expiry_parts( $expiry ) {
-            $expiry_parts = explode('/', $expiry);
-            $expiry_month = intval(trim($expiry_parts[0]));
-            $expiry_year  = intval(trim($expiry_parts[1]));
-        
-            // Convert 2-digit year to 4-digit year if necessary (e.g., 24 -> 2024)
-            if ( $expiry_year < 100 ) {
-                $expiry_year += 2000;
-            }
-        
-            return [$expiry_month, $expiry_year];
-        }
-        
         // Method to validate expiry date logic
         private function validate_expiry_date_logic($expiry_month, $expiry_year) {
             $current_year = intval(date('Y'));
@@ -353,6 +327,9 @@ function woocommerce_worldpay_init() {
                     'entity' => $this->validate_entity( $this->get_option( 'entity' ) ),
                 ),
                 'instruction' => array(
+                    "settlement" => array(
+                        "auto" => true
+                        ),
                     'method' => 'card',
                     'paymentInstrument' => array(
                         'type' => 'plain',
@@ -363,9 +340,6 @@ function woocommerce_worldpay_init() {
                             'year' => $expiry_year
                         ),
                         "cvc" => $cvc,  // CVC code
-                        'settlement' => array(
-                            'auto' => true,
-                        ),
                     ),
                     'tokenCreation' => array(
                         'type' => 'worldpay'
@@ -380,7 +354,7 @@ function woocommerce_worldpay_init() {
                     'value' => array(
                         'currency' => 'GBP',
                         'amount' => intval($order->get_total() * 100), // Convert to pence if needed
-                    )
+                    ),
                 )
             );
         }
@@ -393,11 +367,11 @@ function woocommerce_worldpay_init() {
         
             $ch = curl_init();
             curl_setopt_array($ch, [
-                CURLOPT_URL => $test_mode ? 'https://try.access.worldpay.com/api/payments' : 'https://access.worldpay.com/api/payments',
+                CURLOPT_URL            => $test_mode ? 'https://try.access.worldpay.com/api/payments' : 'https://access.worldpay.com/api/payments',
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => json_encode($payload),
-                CURLOPT_HTTPHEADER => [
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => json_encode($payload),
+                CURLOPT_HTTPHEADER     => [
                     'Content-Type: application/json',
                     'WP-Api-Version: 2024-06-01',
                     'Authorization: Basic ' . base64_encode($username . ':' . $password)
@@ -421,9 +395,24 @@ function woocommerce_worldpay_init() {
                     'response' => $response_data
                 );
             } else {
-                // Handle failure response
-                $error_message = isset($response_data['messages']) ? $response_data['messages'] : 'Unknown error';
-                $this->handle_error('Payment failed: ' . $error_message, 'Payment failed: ' . $error_message);
+                    // Handle failure response
+                    $error_message = isset($response_data['refusalDescription']) ? $response_data['refusalDescription'] : 'Unknown error';
+                    $refusal_code = isset($response_data['refusalCode']) ? $response_data['refusalCode'] : 'No refusal code provided';
+
+                    error_log('Refusal Code: ' . $refusal_code . ' - ' . $error_message);
+
+                    switch ($refusal_code) {
+                        case '5':
+                            $custom_message = 'Transaction declined: Do not honour. Please contact your bank or try a different card.';
+                            break;
+
+                        default:
+                            $custom_message = 'Transaction failed: ' . $error_message;
+                            break;
+                    }
+
+                    $this->handle_error('Payment failed: ' . $custom_message, 'Refusal Code: ' . $refusal_code . ' - ' . $error_message);
+
                 return false;
             }
         }
