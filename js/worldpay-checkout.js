@@ -36,19 +36,59 @@ jQuery(document).ready(function($) {
         $('.woocommerce-error').remove();
     }
 
-    // Validate card number
-    $(document).on('input', '#worldpay-card-number', function() {
-        const cardNumber = $(this).val().replace(/\D/g, ''); // Remove non-numeric characters
-        $(this).val(cardNumber.replace(/(.{4})/g, '$1 ')); // Add space every 4 digits for better readability
-        if (cardNumber.length < 13 || cardNumber.length > 19) {
-            $(this).addClass('woocommerce-invalid').removeClass('woocommerce-validated');
-            showError('Card number is invalid');
-        } else {
-            $(this).addClass('woocommerce-validated').removeClass('woocommerce-invalid');
-            removeError();
+        // Debounce function to limit the rate of formatting application
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
         }
-        checkFormValidity(); // Check form validity after updating
-    });
+    
+        function formatCardNumber(cardNumber) {
+            return cardNumber
+                .replace(/\D/g, '')  // Remove non-numeric characters
+                .replace(/(.{4})/g, '$1 ')  // Add space every 4 digits
+                .trim();  // Remove trailing spaces
+        }
+    
+        function updateCardNumberField() {
+            let rawCardNumber = $('#worldpay-card-number').val().replace(/\D/g, '');
+            let formattedCardNumber = formatCardNumber(rawCardNumber);
+            $('#worldpay-card-number').val(formattedCardNumber);
+        }
+    
+        // Handle multiple events with debouncing
+        $(document).on('input keyup change blur', '#worldpay-card-number', debounce(function() {
+            updateCardNumberField();
+    
+            let rawCardNumber = $(this).val().replace(/\D/g, '');
+            if (rawCardNumber.length < 13 || rawCardNumber.length > 19) {
+                $(this).addClass('woocommerce-invalid').removeClass('woocommerce-validated');
+                showError('Card number is invalid');
+            } else {
+                $(this).addClass('woocommerce-validated').removeClass('woocommerce-invalid');
+                removeError();
+            }
+            checkFormValidity(); // Call your form validity check function
+        }, 300)); // Debounce time (in milliseconds)
+    
+        // Function to display error messages
+        function showError(message) {
+            $('.woocommerce-error').remove(); // Clear any existing error messages
+            $('<div class="woocommerce-error">' + message + '</div>').insertAfter('#worldpay-card-number');
+        }
+    
+        // Function to remove error messages
+        function removeError() {
+            $('.woocommerce-error').remove();
+        }
+    
+        // Example placeholder for checkFormValidity function
+        function checkFormValidity() {
+            // Implement your form validity logic here
+        }
+    
 
     // Automatically format and validate expiry date (MM/YY)
     $(document).on('input', '#worldpay-card-expiry', function(){

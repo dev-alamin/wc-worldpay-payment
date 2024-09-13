@@ -174,8 +174,11 @@ function woocommerce_worldpay_init() {
         }
         
         private function handle_successful_payment( $response, $order ) {
-            if ( isset( $response['response']['outcome'] ) && ($response['response']['outcome'] === 'authorized' || 
-            $response['response']['outcome'] === 'sentForSettlement') ) {
+        
+            // Step 2: Handle the final payment outcome after 3DS challenge
+            if ( isset( $response['response']['outcome'] ) && 
+                 ($response['response']['outcome'] === 'authorized' || 
+                  $response['response']['outcome'] === 'sentForSettlement') ) {
                 // Payment was authorized or sent for settlement
                 $order->add_order_note( 'Payment authorized. Awaiting settlement.' );
         
@@ -197,7 +200,6 @@ function woocommerce_worldpay_init() {
                     'result'   => 'success',
                     'redirect' => $this->get_return_url( $order ),
                 ];
-        
             } else {
                 // Outcome was not authorized or failed
                 $order->add_order_note( 'Payment not authorized. Outcome: ' . $response['response']['outcome'] );
@@ -208,7 +210,8 @@ function woocommerce_worldpay_init() {
                     'redirect' => '',
                 ];
             }
-        }        
+        }
+        
         
         private function handle_failed_payment( $response, $order ) {
             // Log error for debugging (optional)
@@ -317,19 +320,26 @@ function woocommerce_worldpay_init() {
         
         // Method to build the payment payload
         private function build_payload($order, $card_number, $expiry_month, $expiry_year, $cvc ) {
-            $allowed_characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_!@#$%()*=-.:;?[]{}~/+';
+            $allowed_characters    = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_!@#$%()*=-.:;?[]{}~/+';
             $transaction_reference = 'VapeHub_' . $order->get_order_number();
-            $sanitized_reference = preg_replace('/[^' . preg_quote($allowed_characters, '/') . ']/', '', $transaction_reference);
-
+            $sanitized_reference   = preg_replace('/[^' . preg_quote($allowed_characters, '/') . ']/', '', $transaction_reference);
+            
+            // Extract billing address information from the order
+            $billing_address  = $order->get_billing_address_1();
+            $billing_city     = $order->get_billing_city();
+            $billing_postcode = $order->get_billing_postcode();
+            $billing_state    = $order->get_billing_state();
+            $billing_country  = $order->get_billing_country();
+        
             return array(
                 'transactionReference' => $sanitized_reference,
                 'merchant' => array(
                     'entity' => $this->validate_entity( $this->get_option( 'entity' ) ),
                 ),
                 'instruction' => array(
-                    "settlement" => array(
-                        "auto" => true
-                        ),
+                    'settlement' => array(
+                        'auto' => true
+                    ),
                     'method' => 'card',
                     'paymentInstrument' => array(
                         'type' => 'plain',
@@ -339,7 +349,14 @@ function woocommerce_worldpay_init() {
                             'month' => $expiry_month,
                             'year' => $expiry_year
                         ),
-                        "cvc" => $cvc,  // CVC code
+                        'billingAddress' => array(
+                            'address1' => $billing_address,
+                            'postalCode' => $billing_postcode,
+                            'city' => $billing_city,
+                            'state' => $billing_state,
+                            'countryCode' => $billing_country,
+                        ),
+                        'cvc' => $cvc,  // CVC code
                     ),
                     'tokenCreation' => array(
                         'type' => 'worldpay'
@@ -353,8 +370,8 @@ function woocommerce_worldpay_init() {
                     ),
                     'value' => array(
                         'currency' => 'GBP',
-                        'amount' => intval($order->get_total() * 100), // Convert to pence if needed
-                    ),
+                        'amount' => intval($order->get_total() ), // Convert to pence if needed
+                    )
                 )
             );
         }
@@ -440,7 +457,8 @@ function woocommerce_worldpay_init() {
                 <label for="worldpay-card-number">' . __( 'Card Number', 'woocommerce-worldpay-addon' ) . ' <span class="required">*</span></label>
                 <input id="worldpay-card-number" name="worldpay-card-number" class="input-text wc-credit-card-form-card-number" inputmode="numeric" 
                        autocomplete="cc-number" autocorrect="no" autocapitalize="no" maxlength="19" spellcheck="no" 
-                       type="tel" placeholder="•••• •••• •••• ••••" required>
+                       type="tel" placeholder="•••• •••• •••• ••••"
+                       data-grouplength=4 data-maxlength=19 required>
             </p>';
         
             // Expiry Date Field
@@ -577,11 +595,12 @@ function woocommerce_worldpay_init() {
 
 }
 
-add_action('wp_enqueue_scripts', 'enqueue_worldpay_scripts');
+add_action('wp_footer', 'enqueue_worldpay_scripts');
 function enqueue_worldpay_scripts() {
     if (is_checkout()) {
         // Enqueue a script that will handle payment method checks
         wp_enqueue_script('worldpay-checkout-handler', plugins_url('/js/worldpay-checkout.js', __FILE__), array('jquery'), time(), true);
+        wp_enqueue_script( 'vh-input-masks-cc', 'https://cdnjs.cloudflare.com/ajax/libs/inputmask/4.0.9/jquery.inputmask.bundle.min.js', ['jquery'] );
     }
 }
 
